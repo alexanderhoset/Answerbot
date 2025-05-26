@@ -39,7 +39,7 @@ jobs:
               // Find latest PR check status
               let PRCheckStatus = 'Not checked';
               const PRStatuses = statuses.data
-                .filter(status => status.context === 'PR-check')
+                .filter(status => status.context === 'PR-Check')
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
               if (PRStatuses.length > 0) {
