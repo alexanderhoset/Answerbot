@@ -1,5 +1,7 @@
 # GitHub PR Verification Bot
 
+TEST
+
 This repository contains GitHub Actions workflows to automate PR verification and reporting.
 
 ## 📋 Features
