@@ -24,7 +24,7 @@ env:
   # Event-based messages
   MESSAGE_NEW_VERIFICATION: "🔔 **New Verification Required**\n\nNew commits have been pushed. Please verify the changes again."
   MESSAGE_REOPENED: "🔔 **PR Reopened**\n\nThis PR has been reopened. Please verify the changes."
-  MESSAGE_MERGE_BLOCKED: "🚫 **Merge Blocked**\n\nThis PR does not meet the required standards. Please make the necessary changes and push it to the PR. The bot will request another review. The PR cannot be merged until all checks pass."
+  MESSAGE_MERGE_BLOCKED: "🚫 **Merge Blocked**\n\nThis PR does not meet the required standards. Please make the necessary changes and push it to the PR. The bot will request another review. The PR cannot be merged until all checks pass.\n\nIf you made a mistake, post a new `/answer` comment to correct your response."
 
 on:
   pull_request:
