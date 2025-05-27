@@ -1,5 +1,31 @@
 name: PR Check
 
+# Version: 0.1.0
+
+# Cancel in-progress runs when new commits are pushed
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+# Configuration for all bot messages
+env:
+  # Initial question and options
+  MESSAGE_INITIAL_QUESTION: "### Code Review Question\nDid you follow the rules?"
+  MESSAGE_OPTION_YES: "- `/answer yes` - Rules were followed"
+  MESSAGE_OPTION_NO: "- `/answer no` - Rules were not followed"
+  MESSAGE_OPTION_NA: "- `/answer n/a` - Rules do not apply to this PR"
+  
+  # Status messages
+  STATUS_PENDING: "Waiting for reviewer response"
+  STATUS_SYNC: "New changes detected, verification required"
+  STATUS_SUCCESS: "Rules were followed"
+  STATUS_FAILURE: "Rules were not followed"
+  STATUS_NA: "Rules do not apply"
+  
+  # Event-based messages
+  MESSAGE_NEW_VERIFICATION: "🔔 **New Verification Required**\n\nNew commits have been pushed. Please verify the changes again."
+  MESSAGE_REOPENED: "🔔 **PR Reopened**\n\nThis PR has been reopened. Please verify the changes."
+  MESSAGE_MERGE_BLOCKED: "🚫 **Merge Blocked**\n\nThis PR does not meet the required standards. Please make the necessary changes and push it to the PR. The bot will request another review. The PR cannot be merged until all checks pass."
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]  # Added synchronize to handle new commits
@@ -20,8 +46,8 @@ jobs:
         with:
           script: |
             const statusMessage = context.payload.action === 'synchronize' 
-              ? 'New changes detected, verification required' 
-              : 'Waiting for reviewer response';
+              ? process.env.STATUS_SYNC
+              : process.env.STATUS_PENDING;
               
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
@@ -39,16 +65,17 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            let messageBody = '### Code Review Question\nDid you follow the rules?\n\nPlease reply with:\n- `/answer yes` - Rules were followed\n- `/answer no` - Rules were not followed\n- `/answer n/a` - Rules do not apply to this PR';
+            // Build the base message
+            let messageBody = `${process.env.MESSAGE_INITIAL_QUESTION}\n\nPlease reply with:\n${process.env.MESSAGE_OPTION_YES}\n${process.env.MESSAGE_OPTION_NO}\n${process.env.MESSAGE_OPTION_NA}`;
 
             // Add appropriate headers based on the action
             if (context.payload.action === 'synchronize') {
-              messageBody = '🔔 **New Verification Required**\n\nNew commits have been pushed. Please verify the changes again.\n\n' + messageBody;
+              messageBody = `${process.env.MESSAGE_NEW_VERIFICATION}\n\n${messageBody}`;
             } else if (context.payload.action === 'reopened') {
-              messageBody = '🔔 **PR Reopened**\n\nThis PR has been reopened. Please verify the changes.\n\n' + messageBody;
+              messageBody = `${process.env.MESSAGE_REOPENED}\n\n${messageBody}`;
             }
 
-            // Always post a new comment
+            // Post the comment
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -63,26 +90,37 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const comment = context.payload.comment.body.trim().toLowerCase();
-            
-            // Only process comments that start with /answer
-            if (!comment.startsWith('/answer')) {
+            try {
+              const comment = context.payload.comment.body.trim();
+              
+              // Only process comments that start with /answer
+              if (!comment.toLowerCase().startsWith('/answer')) {
+                core.setOutput('valid', 'false');
+                return;
+              }
+              
+              const answerMatch = comment.match(/^\/answer\s+(yes|no|n\/a)$/i);
+              if (!answerMatch) {
+                core.setOutput('valid', 'false');
+                return;
+              }
+              
+              const answer = answerMatch[1].toLowerCase();
+              
+              // Add eyes reaction to the comment
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'eyes'
+              });
+              
+              core.setOutput('valid', 'true');
+              core.setOutput('answer', answer);
+            } catch (error) {
+              core.setFailed(`Failed to process comment: ${error.message}`);
               core.setOutput('valid', 'false');
-              return;
             }
-            
-            const answer = comment.replace('/answer', '').trim();
-            
-            // Add eyes reaction to the comment
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'eyes'
-            });
-            
-            core.setOutput('valid', 'true');
-            core.setOutput('answer', answer);
 
       - name: Update Status
         if: github.event_name == 'issue_comment' && steps.validate.outputs.valid == 'true'
@@ -96,31 +134,39 @@ jobs:
             
             if (answer === 'yes') {
               state = 'success';
-              description = 'Rules were followed';
+              description = process.env.STATUS_SUCCESS;
             } else if (answer === 'no') {
               state = 'failure';
-              description = 'Rules were not followed';
+              description = process.env.STATUS_FAILURE;
+              
+              // Add a comment: merging is blocked
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: process.env.MESSAGE_MERGE_BLOCKED
+              });
             } else if (answer === 'n/a') {
               state = 'success';
-              description = 'Rules do not apply';
+              description = process.env.STATUS_NA;
             }
-            
-            // Get the PR details
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            // Set the status
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: pr.data.head.sha,
-              state: state,
-              context: 'PR-Check',
-              description: description
-            });
-
-            core.setOutput('state', state);
-            core.setOutput('answer', answer);
+              
+              // Get the PR details
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              // Set the status
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pr.data.head.sha,
+                state: state,
+                context: 'PR-Check',
+                description: description
+              });
+              
+              core.setOutput('state', state);
+              core.setOutput('answer', answer);
